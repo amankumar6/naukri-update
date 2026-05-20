@@ -14,3 +14,5 @@ npm-debug.log*
 # Debug screenshots from failed runs
 screenshots/
 *.png
+
+/logs
