@@ -1,0 +1,59 @@
+name: Naukri Profile Auto-Update
+
+# -----------------------------------------------------------------------------
+# Schedule
+# -----------------------------------------------------------------------------
+# GitHub Actions cron times are in UTC.
+# IST = UTC + 5:30, so subtract 5h30m from your desired IST time:
+#
+#   IST 09:00  ->  UTC 03:30   ->  "30 3 * * *"
+#   IST 13:00  ->  UTC 07:30   ->  "30 7 * * *"
+#   IST 18:00  ->  UTC 12:30   ->  "30 12 * * *"
+#
+# To add more daily runs in the future, just add another "- cron:" line below.
+# Cron format: "minute hour day-of-month month day-of-week"
+#
+# Note: scheduled workflows on GitHub Actions can be delayed by a few minutes
+# during peak times — that's normal and won't affect functionality.
+# -----------------------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: "30 3 * * *"   # 09:00 IST
+    - cron: "30 7 * * *"   # 13:00 IST
+    - cron: "30 12 * * *"  # 18:00 IST
+  # Allow manual trigger from the Actions tab (great for first-time test)
+  workflow_dispatch:
+
+jobs:
+  update-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Naukri update script
+        env:
+          NAUKRI_EMAIL: ${{ secrets.NAUKRI_EMAIL }}
+          NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
+        run: npm start
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 7

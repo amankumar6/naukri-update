@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Environment variables (NEVER commit real credentials)
+.env
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Debug screenshots from failed runs
+screenshots/
+*.png

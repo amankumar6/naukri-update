@@ -1,0 +1,16 @@
+{
+  "name": "naukri-update",
+  "version": "1.0.0",
+  "description": "Automated Naukri.com profile update bot using Puppeteer + GitHub Actions",
+  "main": "naukri-update.js",
+  "scripts": {
+    "start": "node naukri-update.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "puppeteer": "^25.0.4"
+  }
+}
