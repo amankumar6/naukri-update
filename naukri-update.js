@@ -1,11 +1,15 @@
 /**
  * Naukri Profile Auto-Update Bot
  *
- * Logs into Naukri, clicks the profile edit icon, saves basic details (which updates
- * the "last updated" timestamp), and re-uploads the resume from the /resume folder.
+ * Authentication: prefers cookie-based session (NAUKRI_COOKIES env var, JSON string).
+ * Falls back to password login (NAUKRI_EMAIL/NAUKRI_PASSWORD) only for local use —
+ * Naukri's anti-bot blocks password login from datacenter IPs (GitHub Actions etc.).
  *
- * Run locally:   NAUKRI_EMAIL=... NAUKRI_PASSWORD=... node naukri-update.js
- * Or via .env:   create .env (see .env.example), then `npm start`
+ * Run locally with cookies:
+ *   NAUKRI_COOKIES="$(cat cookies.json)" npm start
+ *
+ * Run locally with password (fallback):
+ *   NAUKRI_EMAIL=... NAUKRI_PASSWORD=... npm start
  */
 
 require('dotenv').config();
@@ -18,6 +22,7 @@ const puppeteer = require('puppeteer');
 
 const LOGIN_URL = 'https://www.naukri.com/nlogin/login';
 const PROFILE_URL = 'https://www.naukri.com/mnjuser/profile?id=&altresid';
+const HOME_URL = 'https://www.naukri.com';
 const RESUME_DIR = path.join(__dirname, 'resume');
 const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
 
@@ -82,14 +87,96 @@ async function waitForAnySelector(page, selectors, timeout = SELECTOR_TIMEOUT) {
   );
 }
 
-// --- Steps ----------------------------------------------------------------
+/**
+ * Normalize cookies exported from Cookie-Editor (or similar Chrome extensions)
+ * into the shape Puppeteer's setCookie() expects.
+ */
+function normalizeCookies(rawCookies) {
+  if (!Array.isArray(rawCookies)) {
+    throw new Error('Cookies must be a JSON array.');
+  }
 
-async function login(page, email, password) {
-  log('Navigating to login page…');
+  const sameSiteMap = {
+    no_restriction: 'None',
+    none: 'None',
+    lax: 'Lax',
+    strict: 'Strict',
+  };
+
+  return rawCookies
+    .map((c) => {
+      if (!c || !c.name || c.value === undefined) return null;
+
+      const out = {
+        name: c.name,
+        value: String(c.value),
+        domain: c.domain || undefined,
+        path: c.path || '/',
+        secure: Boolean(c.secure),
+        httpOnly: Boolean(c.httpOnly),
+      };
+
+      // Only set expires for non-session cookies; Puppeteer wants seconds (Unix epoch)
+      if (c.expirationDate && !c.session) {
+        out.expires = Math.floor(c.expirationDate);
+      }
+
+      // Map sameSite if present and supported
+      if (c.sameSite) {
+        const mapped = sameSiteMap[String(c.sameSite).toLowerCase()];
+        if (mapped) out.sameSite = mapped;
+      }
+
+      return out;
+    })
+    .filter(Boolean);
+}
+
+// --- Auth strategies ------------------------------------------------------
+
+async function loginWithCookies(page, cookiesJson) {
+  log('Authenticating with cookies…');
+
+  let raw;
+  try {
+    raw = JSON.parse(cookiesJson);
+  } catch (err) {
+    throw new Error(
+      'NAUKRI_COOKIES is not valid JSON. Re-export from your browser extension.'
+    );
+  }
+
+  const cookies = normalizeCookies(raw);
+  if (cookies.length === 0) {
+    throw new Error('NAUKRI_COOKIES contains no usable cookies.');
+  }
+  log(`Loaded ${cookies.length} cookies.`);
+
+  // Navigate to the domain first so cookies attach to the right context,
+  // then set them, then go to the actual profile.
+  await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
+  await page.setCookie(...cookies);
+
+  // Verify by hitting the profile page — if the session is bad, Naukri redirects
+  // back to /nlogin/login.
+  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
+
+  const url = page.url();
+  log(`Post-cookie URL: ${url}`);
+  if (url.includes('/nlogin/login') || url.includes('/login')) {
+    await takeScreenshot(page, 'cookie-auth-failed');
+    throw new Error(
+      'Cookie session is invalid or expired. Re-export cookies from your browser ' +
+        'and update the NAUKRI_COOKIES secret.'
+    );
+  }
+  log('Cookie authentication successful.');
+}
+
+async function loginWithPassword(page, email, password) {
+  log('Authenticating with email/password (local fallback)…');
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
 
-  log('Waiting for login form…');
-  // Naukri occasionally tweaks selectors; try the common ones.
   const emailSelectors = [
     'input[placeholder*="Email" i]',
     'input[type="text"][name="email"]',
@@ -105,14 +192,11 @@ async function login(page, email, password) {
   const { element: emailInput } = await waitForAnySelector(page, emailSelectors);
   const { element: passwordInput } = await waitForAnySelector(page, passwordSelectors);
 
-  log('Filling credentials…');
   await emailInput.click({ clickCount: 3 });
   await emailInput.type(email, { delay: 30 });
   await passwordInput.click({ clickCount: 3 });
   await passwordInput.type(password, { delay: 30 });
 
-  log('Submitting login form…');
-  // Submit either by clicking the Login button or pressing Enter
   const submitSelectors = [
     'button[type="submit"]',
     'button.loginButton',
@@ -139,18 +223,19 @@ async function login(page, email, password) {
       .catch(() => null);
   }
 
-  // Verify login: the URL should have changed away from /nlogin/login
   const currentUrl = page.url();
   log(`Post-login URL: ${currentUrl}`);
   if (currentUrl.includes('/nlogin/login')) {
     await takeScreenshot(page, 'login-failed');
     throw new Error(
-      'Login appears to have failed (still on login page). ' +
-        'Check credentials, or Naukri may be showing a captcha/2FA.'
+      'Password login failed (still on login page). On GitHub Actions this is ' +
+        'expected — Naukri blocks logins from datacenter IPs. Use NAUKRI_COOKIES instead.'
     );
   }
-  log('Login successful.');
+  log('Password login successful.');
 }
+
+// --- Steps ----------------------------------------------------------------
 
 async function editAndSaveProfile(page) {
   log('Navigating to profile page…');
@@ -163,7 +248,6 @@ async function editAndSaveProfile(page) {
   await page.waitForSelector('.icon.edit', { timeout: SELECTOR_TIMEOUT, visible: true });
 
   log('Clicking edit icon…');
-  // There may be multiple `.icon.edit` on the page; the first one is the basic-details edit
   await page.$$eval('.icon.edit', (els) => els[0] && els[0].click());
 
   log('Waiting for save button (#saveBasicDetailsBtn)…');
@@ -175,7 +259,6 @@ async function editAndSaveProfile(page) {
   log('Clicking save button…');
   await page.click('#saveBasicDetailsBtn');
 
-  // Wait for the save to complete — the modal usually closes; give it some time.
   await new Promise((r) => setTimeout(r, 5000));
   log('Basic details saved.');
 }
@@ -184,7 +267,6 @@ async function uploadResume(page) {
   const resumePath = findResumeFile();
   log(`Uploading resume: ${resumePath}`);
 
-  // Make sure we're on the profile page (in case prior step navigated away)
   if (!page.url().includes('/mnjuser/profile')) {
     await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT });
     await new Promise((r) => setTimeout(r, 3000));
@@ -195,8 +277,6 @@ async function uploadResume(page) {
     timeout: SELECTOR_TIMEOUT,
   });
 
-  // The dummy upload button has an associated <input type="file"> nearby (usually #attachCV).
-  // Approach 1: target the file input directly.
   const fileInputSelectors = [
     '#attachCV',
     'input[type="file"][name="attachCV"]',
@@ -214,7 +294,6 @@ async function uploadResume(page) {
     }
   }
 
-  // Approach 2: fall back to filechooser API if no input found in DOM yet
   if (!uploaded) {
     log('No file input in DOM; falling back to file chooser…');
     const [fileChooser] = await Promise.all([
@@ -225,7 +304,6 @@ async function uploadResume(page) {
     uploaded = true;
   }
 
-  // Wait for upload to complete. Naukri shows a success message; give generous time.
   log('Waiting for upload to complete…');
   await new Promise((r) => setTimeout(r, 8000));
   log('Resume upload finished.');
@@ -234,13 +312,17 @@ async function uploadResume(page) {
 // --- Main -----------------------------------------------------------------
 
 (async () => {
+  const cookiesJson = process.env.NAUKRI_COOKIES;
   const email = process.env.NAUKRI_EMAIL;
   const password = process.env.NAUKRI_PASSWORD;
 
-  if (!email || !password) {
+  const hasCookies = Boolean(cookiesJson && cookiesJson.trim());
+  const hasPassword = Boolean(email && password);
+
+  if (!hasCookies && !hasPassword) {
     console.error(
-      'ERROR: NAUKRI_EMAIL and NAUKRI_PASSWORD env vars are required. ' +
-        'Set them in a .env file (local) or as GitHub Secrets (CI).'
+      'ERROR: No credentials provided. Set NAUKRI_COOKIES (preferred) or ' +
+        'NAUKRI_EMAIL + NAUKRI_PASSWORD (local fallback only — blocked on GitHub Actions).'
     );
     process.exit(1);
   }
@@ -262,7 +344,6 @@ async function uploadResume(page) {
   page.setDefaultTimeout(SELECTOR_TIMEOUT);
   page.setDefaultNavigationTimeout(NAV_TIMEOUT);
 
-  // Realistic user agent helps avoid simple bot checks
   await page.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -270,7 +351,11 @@ async function uploadResume(page) {
 
   let exitCode = 0;
   try {
-    await login(page, email, password);
+    if (hasCookies) {
+      await loginWithCookies(page, cookiesJson);
+    } else {
+      await loginWithPassword(page, email, password);
+    }
     await editAndSaveProfile(page);
     await uploadResume(page);
     log('All steps completed successfully ✅');

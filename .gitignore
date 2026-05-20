@@ -4,6 +4,10 @@ node_modules/
 # Environment variables (NEVER commit real credentials)
 .env
 
+# Cookie exports for local testing (NEVER commit — same sensitivity as a password)
+cookies.json
+*.cookies.json
+
 # macOS
 .DS_Store
 

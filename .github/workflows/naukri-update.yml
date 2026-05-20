@@ -45,8 +45,12 @@ jobs:
 
       - name: Run Naukri update script
         env:
-          NAUKRI_EMAIL: ${{ secrets.NAUKRI_EMAIL }}
-          NAUKRI_PASSWORD: ${{ secrets.NAUKRI_PASSWORD }}
+          # Cookie-based session auth — the only thing that works on GitHub
+          # Actions IPs (Naukri blocks password login from datacenter IPs).
+          # Export from your browser using the "Cookie-Editor" extension as
+          # JSON for naukri.com, then paste the JSON as the NAUKRI_COOKIES
+          # repo secret. See README for full instructions.
+          NAUKRI_COOKIES: ${{ secrets.NAUKRI_COOKIES }}
         run: npm start
 
       - name: Upload failure screenshots
