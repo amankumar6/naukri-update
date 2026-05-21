@@ -7,6 +7,7 @@ name: Naukri Profile Auto-Update
 # IST = UTC + 5:30, so subtract 5h30m from your desired IST time:
 #
 #   IST 09:00  ->  UTC 03:30   ->  "30 3 * * *"
+#   IST 09:00  ->  UTC 03:30   ->  "30 3 * * *"
 #   IST 13:00  ->  UTC 07:30   ->  "30 7 * * *"
 #   IST 18:00  ->  UTC 12:30   ->  "30 12 * * *"
 #
@@ -20,6 +21,7 @@ name: Naukri Profile Auto-Update
 on:
   schedule:
     - cron: "30 3 * * *"   # 09:00 IST
+    - cron: "45 4 * * *"  # 18:00 IST
     - cron: "30 7 * * *"   # 13:00 IST
     - cron: "30 12 * * *"  # 18:00 IST
   # Allow manual trigger from the Actions tab (great for first-time test)
