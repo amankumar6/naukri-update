@@ -21,7 +21,7 @@ name: Naukri Profile Auto-Update
 on:
   schedule:
     - cron: "30 3 * * *"   # 09:00 IST
-    - cron: "45 4 * * *"  # 18:00 IST
+    - cron: "0 5 * * *"    # 10:30 IST
     - cron: "30 7 * * *"   # 13:00 IST
     - cron: "30 12 * * *"  # 18:00 IST
   # Allow manual trigger from the Actions tab (great for first-time test)
